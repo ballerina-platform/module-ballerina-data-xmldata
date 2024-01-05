@@ -16,7 +16,7 @@
  *  under the License.
  */
 
-package io.ballerina.stdlib.data.xmldata.xml;
+package io.ballerina.stdlib.data.xmldata.io;
 
 import io.ballerina.runtime.api.Environment;
 import io.ballerina.runtime.api.async.Callback;
