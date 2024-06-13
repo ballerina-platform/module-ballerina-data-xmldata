@@ -21,6 +21,7 @@ package io.ballerina.lib.data.xmldata.utils;
 import io.ballerina.lib.data.xmldata.FromString;
 import io.ballerina.lib.data.xmldata.xml.QualifiedName;
 import io.ballerina.lib.data.xmldata.xml.QualifiedNameMap;
+import io.ballerina.runtime.api.Module;
 import io.ballerina.runtime.api.PredefinedTypes;
 import io.ballerina.runtime.api.TypeTags;
 import io.ballerina.runtime.api.creators.TypeCreator;
@@ -30,6 +31,7 @@ import io.ballerina.runtime.api.types.ArrayType;
 import io.ballerina.runtime.api.types.Field;
 import io.ballerina.runtime.api.types.MapType;
 import io.ballerina.runtime.api.types.RecordType;
+import io.ballerina.runtime.api.types.ReferenceType;
 import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.types.UnionType;
 import io.ballerina.runtime.api.utils.StringUtils;
@@ -205,10 +207,6 @@ public class DataUtils {
         return attributeName;
     }
 
-    public static BArray createNewAnydataList(Type type) {
-        return ValueCreator.createArrayValue(getArrayTypeFromElementType(type));
-    }
-
     public static QualifiedName getElementName(QName qName) {
         return new QualifiedName(qName.getNamespaceURI(), qName.getLocalPart(), qName.getPrefix());
     }
@@ -230,33 +228,18 @@ public class DataUtils {
         return result;
     }
 
-    public static void validateRequiredFields(BMap<BString, Object> currentMapValue, XmlAnalyzerData analyzerData) {
-        Map<QualifiedName, Field> fields = analyzerData.fieldHierarchy.peek().getMembers();
-        for (QualifiedName key : fields.keySet()) {
-            // Validate required array size
-            Field field = fields.get(key);
-            String fieldName = field.getFieldName();
-            if (field.getFieldType().getTag() == TypeTags.ARRAY_TAG) {
-                ArrayType arrayType = (ArrayType) field.getFieldType();
-                if (arrayType.getSize() != -1
-                        && arrayType.getSize() != ((BArray) currentMapValue.get(
-                        StringUtils.fromString(fieldName))).getLength()) {
-                    throw DiagnosticLog.error(DiagnosticErrorCode.ARRAY_SIZE_MISMATCH);
-                }
-            }
-
-            if (!SymbolFlags.isFlagOn(field.getFlags(), SymbolFlags.OPTIONAL)
-                    && !currentMapValue.containsKey(StringUtils.fromString(fieldName))) {
-                throw DiagnosticLog.error(DiagnosticErrorCode.REQUIRED_FIELD_NOT_PRESENT, fieldName);
+    public static void validateRequiredFields(XmlAnalyzerData analyzerData) {
+        Map<QualifiedName, Field> remainingFields = analyzerData.fieldHierarchy.peek().getMembers();
+        for (Field field : remainingFields.values()) {
+            if (SymbolFlags.isFlagOn(field.getFlags(), SymbolFlags.REQUIRED)) {
+                throw DiagnosticLog.error(DiagnosticErrorCode.REQUIRED_FIELD_NOT_PRESENT, field.getFieldName());
             }
         }
 
-        Map<QualifiedName, Field> attributes = analyzerData.attributeHierarchy.peek().getMembers();
-        for (QualifiedName key : attributes.keySet()) {
-            Field field = attributes.get(key);
-            String fieldName = field.getFieldName();
-            if (!SymbolFlags.isFlagOn(field.getFlags(), SymbolFlags.OPTIONAL)) {
-                throw DiagnosticLog.error(DiagnosticErrorCode.REQUIRED_ATTRIBUTE_NOT_PRESENT, fieldName);
+        Map<QualifiedName, Field> remainingAttributes = analyzerData.attributeHierarchy.peek().getMembers();
+        for (Field attribute : remainingAttributes.values()) {
+            if (!SymbolFlags.isFlagOn(attribute.getFlags(), SymbolFlags.OPTIONAL)) {
+                throw DiagnosticLog.error(DiagnosticErrorCode.REQUIRED_ATTRIBUTE_NOT_PRESENT, attribute.getFieldName());
             }
         }
     }
@@ -278,18 +261,15 @@ public class DataUtils {
         };
     }
 
-    public static ArrayType getArrayTypeFromElementType(Type type) {
+    public static BArray createArrayValue(Type type) {
         return switch (type.getTag()) {
-            case TypeTags.ARRAY_TAG -> TypeCreator.createArrayType(((ArrayType) type).getElementType());
-            case TypeTags.JSON_TAG -> PredefinedTypes.TYPE_JSON_ARRAY;
-            case TypeTags.INT_TAG, TypeTags.FLOAT_TAG, TypeTags.STRING_TAG, TypeTags.BOOLEAN_TAG, TypeTags.BYTE_TAG,
-                    TypeTags.DECIMAL_TAG, TypeTags.RECORD_TYPE_TAG, TypeTags.MAP_TAG, TypeTags.OBJECT_TYPE_TAG,
-                    TypeTags.XML_TAG, TypeTags.NULL_TAG -> TypeCreator.createArrayType(type);
-            case TypeTags.TYPE_REFERENCED_TYPE_TAG -> getArrayTypeFromElementType(TypeUtils.getReferredType(type));
-            default -> PredefinedTypes.TYPE_ANYDATA_ARRAY;
+            case TypeTags.ARRAY_TAG -> ValueCreator.createArrayValue((ArrayType) type);
+            case TypeTags.JSON_TAG -> ValueCreator.createArrayValue(PredefinedTypes.TYPE_JSON_ARRAY);
+            case TypeTags.ANYDATA_TAG -> ValueCreator.createArrayValue(PredefinedTypes.TYPE_ANYDATA_ARRAY);
+            case TypeTags.TYPE_REFERENCED_TYPE_TAG -> createArrayValue(TypeUtils.getReferredType(type));
+            default -> throw new IllegalStateException("Unexpected value: " + type.getTag());
         };
     }
-
     public static MapType getMapTypeFromConstraintType(Type constraintType) {
         return switch (constraintType.getTag()) {
             case TypeTags.MAP_TAG -> (MapType) constraintType;
@@ -304,15 +284,18 @@ public class DataUtils {
     }
 
     public static void updateExpectedTypeStacks(RecordType recordType, XmlAnalyzerData analyzerData) {
-        analyzerData.attributeHierarchy.push(new QualifiedNameMap(getAllAttributesInRecordType(recordType)));
-        analyzerData.fieldHierarchy.push(new QualifiedNameMap(getAllFieldsInRecordType(recordType, analyzerData)));
+        analyzerData.attributeHierarchy.push(new QualifiedNameMap<>(getAllAttributesInRecordType(recordType)));
+        analyzerData.fieldHierarchy.push(new QualifiedNameMap<>(getAllFieldsInRecordType(recordType, analyzerData)));
+        analyzerData.visitedFieldHierarchy.push(new QualifiedNameMap<>(new HashMap<>()));
         analyzerData.restTypes.push(recordType.getRestFieldType());
     }
 
-    public static void removeExpectedTypeStacks(XmlAnalyzerData analyzerData) {
-        analyzerData.attributeHierarchy.pop();
+    public static void popExpectedTypeStacks(XmlAnalyzerData analyzerData) {
         analyzerData.fieldHierarchy.pop();
+        analyzerData.visitedFieldHierarchy.pop();
         analyzerData.restTypes.pop();
+        analyzerData.attributeHierarchy.pop();
+        analyzerData.arrayIndexes.pop();
     }
 
     public static boolean isAnydataOrJson(int typeTag) {
@@ -782,6 +765,27 @@ public class DataUtils {
         return prefix.getValue().concat(Constants.COLON).concat(key);
     }
 
+    public static boolean isRegExpType(Type type) {
+        Module module = type.getPackage();
+        if (module == null) {
+            return false;
+        }
+
+        String moduleName = module.getName();
+        String typeName = type.getName();
+        if (typeName == null || moduleName == null) {
+            return false;
+        }
+        if (moduleName.equals(Constants.REGEXP_MODULE_NAME) && typeName.equals(Constants.REGEXP_TYPE_NAME)) {
+            return true;
+        }
+
+        if (type.getTag() == TypeTags.TYPE_REFERENCED_TYPE_TAG) {
+            return isRegExpType(((ReferenceType) type).getReferredType());
+        }
+        return false;
+    }
+
     /**
      * Holds data required for the traversing.
      *
@@ -790,8 +794,10 @@ public class DataUtils {
     public static class XmlAnalyzerData {
         public final Stack<Object> nodesStack = new Stack<>();
         public final Stack<QualifiedNameMap<Field>> fieldHierarchy = new Stack<>();
+        public final Stack<QualifiedNameMap<Field>> visitedFieldHierarchy = new Stack<>();
         public final Stack<QualifiedNameMap<Field>> attributeHierarchy = new Stack<>();
         public final Stack<Type> restTypes = new Stack<>();
+        public final Stack<HashMap<String, Integer>> arrayIndexes = new Stack<>();
         public RecordType rootRecord;
         public Field currentField;
         public QualifiedName rootElement;

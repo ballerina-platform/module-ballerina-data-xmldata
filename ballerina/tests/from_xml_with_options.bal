@@ -294,7 +294,7 @@ function testDisableProjectionInArrayForParseStringNegative() {
     test:assertEquals((<error>rec).message(), "array size is not compatible with the expected size");
 }
 
-@test:Config
+@test:Config 
 function testDisableProjectionInArrayForParseAsTypeNegative() {
     xml xmlVal1 = xml `<DataProj>
         <A><B>1</B></A>

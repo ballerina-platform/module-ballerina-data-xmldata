@@ -129,6 +129,7 @@ public class XmlParser {
 
     private void reset(XmlParserData xmlParserData) {
         xmlParserData.fieldHierarchy.clear();
+        xmlParserData.visitedFieldHierarchy.clear();
         xmlParserData.attributeHierarchy.clear();
         xmlParserData.restTypes.clear();
         xmlParserData.nodesStack.clear();
@@ -136,6 +137,7 @@ public class XmlParser {
         xmlParserData.siblings.clear();
         xmlParserData.recordTypeStack.clear();
         xmlParserData.restFieldsPoints.clear();
+        xmlParserData.arrayIndexes.clear();
     }
 
     public Object parse(XmlParserData xmlParserData) {
@@ -197,9 +199,7 @@ public class XmlParser {
                     QName endElement = xmlStreamReader.getName();
                     if (endElement.getLocalPart().equals(startElementName)) {
                         validateRequiredFields(xmlParserData);
-                        xmlParserData.fieldHierarchy.pop();
-                        xmlParserData.restTypes.pop();
-                        xmlParserData.attributeHierarchy.pop();
+                        popExpectedTypeStacks(xmlParserData);
                         break;
                     }
                 }
@@ -225,7 +225,7 @@ public class XmlParser {
         }
 
         RecordType rootRecord = xmlParserData.rootRecord;
-        xmlParserData.currentNode = ValueCreator.createRecordValue(rootRecord);
+        xmlParserData.currentNode = ValueCreator.createRecordValue(rootRecord.getPackage(), rootRecord.getName());
         QualifiedName elementQName = getElementName(xmlStreamReader);
         xmlParserData.rootElement =
                 DataUtils.validateAndGetXmlNameFromRecordAnnotation(rootRecord, rootRecord.getName(), elementQName);
@@ -234,6 +234,7 @@ public class XmlParser {
         // Keep track of fields and attributes
         updateExpectedTypeStacks(rootRecord, xmlParserData);
         handleAttributes(xmlStreamReader, xmlParserData);
+        xmlParserData.arrayIndexes.push(new HashMap<>());
     }
 
     @SuppressWarnings("unchecked")
@@ -258,11 +259,14 @@ public class XmlParser {
         if (currentField == null) {
             QualifiedName contentQName = new QualifiedName("", textFieldName, "");
             if (!xmlParserData.fieldHierarchy.peek().contains(contentQName)) {
-                if (!xmlParserData.allowDataProjection) {
+                if (xmlParserData.visitedFieldHierarchy.peek().contains(contentQName)) {
+                    currentField = xmlParserData.visitedFieldHierarchy.peek().get(contentQName);
+                } else if (!xmlParserData.allowDataProjection) {
                     throw DiagnosticLog.error(DiagnosticErrorCode.UNDEFINED_FIELD, textFieldName,
                             xmlParserData.rootRecord);
+                } else {
+                    return;
                 }
-                return;
             } else {
                 currentField = xmlParserData.fieldHierarchy.peek().remove(contentQName);
             }
@@ -277,23 +281,23 @@ public class XmlParser {
             throw DiagnosticLog.error(DiagnosticErrorCode.INVALID_TYPE, fieldType, PredefinedTypes.TYPE_STRING);
         }
 
-        if (xmlParserData.currentNode.containsKey(bFieldName) && !DataUtils.isAnydataOrJson(fieldType.getTag())) {
+        Object temp = xmlParserData.currentNode.get(bFieldName);
+        if (temp instanceof BArray && !DataUtils.isAnydataOrJson(fieldType.getTag())) {
             if (fieldName.equals(textFieldName)) {
                 xmlParserData.currentNode.put(bFieldName, convertStringToRestExpType(bText, fieldType));
                 return;
             }
 
-            if (!DataUtils.isArrayValueAssignable(fieldType.getTag())) {
-                throw DiagnosticLog.error(DiagnosticErrorCode.FOUND_ARRAY_FOR_NON_ARRAY_TYPE, fieldType, fieldName);
-            }
-
-            int arraySize = ((ArrayType) fieldType).getSize();
-            if (arraySize != -1 && arraySize <= ((BArray) xmlParserData.currentNode.get(bFieldName)).getLength()) {
+            ArrayType arrayType = (ArrayType) fieldType;
+            int currentIndex = xmlParserData.arrayIndexes.peek().get(fieldName);
+            if (arrayType.getState() == ArrayType.ArrayState.CLOSED
+                    && arrayType.getSize() <= currentIndex) {
                 DataUtils.logArrayMismatchErrorIfProjectionNotAllowed(xmlParserData.allowDataProjection);
                 return;
             }
 
-            ((BArray) xmlParserData.currentNode.get(bFieldName)).append(convertStringToRestExpType(bText, fieldType));
+            ((BArray) xmlParserData.currentNode.get(bFieldName)).add(currentIndex,
+                    convertStringToRestExpType(bText, fieldType));
             return;
         }
 
@@ -318,20 +322,17 @@ public class XmlParser {
         Object currentElement = currentNode.get(currentFieldName);
         Object result = convertStringToRestExpType(bText, restType);
 
-         if (currentElement == null && !currentNode.isEmpty()) { // Add text to the #content field
+        if (currentElement == null && !currentNode.isEmpty()) { // Add text to the #content field
             currentNode.put(StringUtils.fromString(Constants.CONTENT), result);
         } else if (parent.get(currentFieldName) instanceof BArray bArray) {
              bArray.add(bArray.getLength() - 1, result);
-         } else {
+        } else {
             parent.put(currentFieldName, result);
         }
 
         xmlParserData.currentNode = parent;
-        xmlParserData.fieldHierarchy.pop();
-        xmlParserData.restTypes.pop();
-        xmlParserData.attributeHierarchy.pop();
-        xmlParserData.recordTypeStack.pop();
-        xmlParserData.siblings = xmlParserData.parents.pop();
+        popExpectedTypeStacks(xmlParserData);
+        updateSiblingAndRootRecord(xmlParserData);
     }
 
     @SuppressWarnings("unchecked")
@@ -343,11 +344,15 @@ public class XmlParser {
                     bText, xmlParserData);
             case TypeTags.ANYDATA_TAG, TypeTags.JSON_TAG -> {
                 BArray tempArr = (BArray) ((BMap<BString, Object>) xmlParserData.nodesStack.peek()).get(bFieldName);
-                Object nextValue = tempArr.get(tempArr.getLength() - 1);
-                if (!(nextValue instanceof BMap)) {
+                // TODO: Using this -2 here seems strange for me. Find a better way to handle this.
+                HashMap<String, Integer> indexes
+                        = xmlParserData.arrayIndexes.get(xmlParserData.arrayIndexes.size() - 2);
+                int currentIndex = indexes.get(bFieldName.getValue());
+                if (fieldType.getState() == ArrayType.ArrayState.CLOSED && currentIndex >= fieldType.getSize()) {
+                    DataUtils.logArrayMismatchErrorIfProjectionNotAllowed(xmlParserData.allowDataProjection);
                     return;
                 }
-                tempArr.add(tempArr.getLength() - 1, convertStringToRestExpType(bText, fieldType));
+                tempArr.add(currentIndex, convertStringToRestExpType(bText, fieldType));
             }
         }
     }
@@ -367,7 +372,8 @@ public class XmlParser {
 
     @SuppressWarnings("unchecked")
     private void handleContentFieldInRecordType(RecordType recordType, BString text, XmlParserData xmlParserData) {
-        popStacks(xmlParserData);
+        popExpectedTypeStacks(xmlParserData);
+        updateSiblingAndRootRecord(xmlParserData);
         for (String key : recordType.getFields().keySet()) {
             if (key.contains(xmlParserData.textFieldName)) {
                 xmlParserData.currentNode.put(StringUtils.fromString(key),
@@ -436,36 +442,22 @@ public class XmlParser {
 
         validateRequiredFields(xmlParserData);
         xmlParserData.currentNode = (BMap<BString, Object>) xmlParserData.nodesStack.pop();
-        popStacks(xmlParserData);
+        popExpectedTypeStacks(xmlParserData);
+        updateSiblingAndRootRecord(xmlParserData);
     }
 
     private void validateRequiredFields(XmlParserData xmlParserData) {
-        BMap<BString, Object> currentMapValue = xmlParserData.currentNode;
-        Map<QualifiedName, Field> fields = xmlParserData.fieldHierarchy.peek().getMembers();
-        for (QualifiedName key : fields.keySet()) {
-            // Validate required array size
-            Field field = fields.get(key);
-            String fieldName = field.getFieldName();
-            if (field.getFieldType().getTag() == TypeTags.ARRAY_TAG) {
-                ArrayType arrayType = (ArrayType) field.getFieldType();
-                if (arrayType.getSize() != -1
-                        && arrayType.getSize() != ((BArray) currentMapValue.get(
-                                StringUtils.fromString(fieldName))).getLength()) {
-                    throw DiagnosticLog.error(DiagnosticErrorCode.ARRAY_SIZE_MISMATCH);
-                }
-            }
-
-            if (!SymbolFlags.isFlagOn(field.getFlags(), SymbolFlags.OPTIONAL)
-                    && !currentMapValue.containsKey(StringUtils.fromString(fieldName))) {
-                throw DiagnosticLog.error(DiagnosticErrorCode.REQUIRED_FIELD_NOT_PRESENT, fieldName);
+        Map<QualifiedName, Field> remainingFields = xmlParserData.fieldHierarchy.peek().getMembers();
+        for (Field field : remainingFields.values()) {
+            if (SymbolFlags.isFlagOn(field.getFlags(), SymbolFlags.REQUIRED)) {
+                throw DiagnosticLog.error(DiagnosticErrorCode.REQUIRED_FIELD_NOT_PRESENT, field.getFieldName());
             }
         }
 
-        Map<QualifiedName, Field> attributes = xmlParserData.attributeHierarchy.peek().getMembers();
-        for (QualifiedName key : attributes.keySet()) {
-            Field field = attributes.get(key);
-            if (!SymbolFlags.isFlagOn(field.getFlags(), SymbolFlags.OPTIONAL)) {
-                throw DiagnosticLog.error(DiagnosticErrorCode.REQUIRED_ATTRIBUTE_NOT_PRESENT, field.getFieldName());
+        Map<QualifiedName, Field> remainingAttributes = xmlParserData.attributeHierarchy.peek().getMembers();
+        for (Field attribute : remainingAttributes.values()) {
+            if (!SymbolFlags.isFlagOn(attribute.getFlags(), SymbolFlags.OPTIONAL)) {
+                throw DiagnosticLog.error(DiagnosticErrorCode.REQUIRED_ATTRIBUTE_NOT_PRESENT, attribute.getFieldName());
             }
         }
     }
@@ -473,7 +465,13 @@ public class XmlParser {
     private void readElement(XMLStreamReader xmlStreamReader, XmlParserData xmlParserData) {
         QualifiedName elemQName = getElementName(xmlStreamReader);
         QualifiedNameMap<Field> fieldMap = xmlParserData.fieldHierarchy.peek();
-        Field currentField = fieldMap.get(elemQName);
+        Field currentField = null;
+        if (xmlParserData.visitedFieldHierarchy.peek().contains(elemQName)) {
+            currentField = xmlParserData.visitedFieldHierarchy.peek().get(elemQName);
+        } else if (fieldMap.contains(elemQName)) {
+            elemQName = fieldMap.getMatchedQualifiedName(elemQName);
+            currentField = fieldMap.remove(elemQName);
+        }
         xmlParserData.currentField = currentField;
         if (currentField == null) {
             String elemName = elemQName.getLocalPart();
@@ -490,45 +488,72 @@ public class XmlParser {
             return;
         }
 
-        elemQName = fieldMap.getMatchedQualifiedName(elemQName);
+        xmlParserData.visitedFieldHierarchy.peek().put(elemQName, currentField);
         BMap<BString, Object> currentNode = xmlParserData.currentNode;
         String fieldName = currentField.getFieldName();
-        Object temp = currentNode.get(StringUtils.fromString(fieldName));
         BString bFieldName = StringUtils.fromString(fieldName);
-        Type fieldType = TypeUtils.getReferredType(currentField.getFieldType());
+        Object temp = currentNode.get(bFieldName);
+        Type fieldType = currentField.getFieldType();
+        Type referredFieldType = TypeUtils.getReferredType(fieldType);
         if (!xmlParserData.siblings.contains(elemQName)) {
             xmlParserData.siblings.put(elemQName, false);
-            currentNode.remove(bFieldName); // This handles attribute and element with same name. Removes attribute.
-        } else if (!(temp instanceof BArray)) {
-            BArray tempArray = ValueCreator.createArrayValue(DataUtils.getArrayTypeFromElementType(fieldType));
-            tempArray.append(temp);
-            currentNode.put(bFieldName, tempArray);
+        } else {
+            if (DataUtils.isAnydataOrJson(referredFieldType.getTag()) && !(temp instanceof BArray)) {
+                BArray tempArray = DataUtils.createArrayValue(referredFieldType);
+                tempArray.append(temp);
+                currentNode.put(bFieldName, tempArray);
+            } else if (referredFieldType.getTag() != TypeTags.ARRAY_TAG) {
+                throw DiagnosticLog.error(DiagnosticErrorCode.FOUND_ARRAY_FOR_NON_ARRAY_TYPE, fieldType, fieldName);
+            }
         }
 
+        if (DataUtils.isRegExpType(fieldType)) {
+            throw DiagnosticLog.error(DiagnosticErrorCode.UNSUPPORTED_TYPE);
+        }
+
+        initializeNextValueBasedOnExpectedType(fieldName, fieldType, temp, currentNode, xmlParserData);
+    }
+
+    private void initializeNextValueBasedOnExpectedType(String fieldName, Type fieldType, Object temp,
+                                                        BMap<BString, Object> currentNode,
+                                                        XmlParserData xmlParserData) {
         switch (fieldType.getTag()) {
             case TypeTags.RECORD_TYPE_TAG ->
                     updateNextRecord(xmlStreamReader, xmlParserData, fieldName, fieldType, (RecordType) fieldType);
             case TypeTags.ARRAY_TAG -> {
-                Type referredType = TypeUtils.getReferredType(((ArrayType) fieldType).getElementType());
-                if (!currentNode.containsKey(bFieldName)) {
+                if (temp == null) {
+                    xmlParserData.arrayIndexes.peek().put(fieldName, 0);
                     currentNode.put(StringUtils.fromString(fieldName),
-                            ValueCreator.createArrayValue(DataUtils.getArrayTypeFromElementType(referredType)));
+                            ValueCreator.createArrayValue((ArrayType) fieldType));
+                } else {
+                    HashMap<String, Integer> indexes = xmlParserData.arrayIndexes.peek();
+                    indexes.put(fieldName, indexes.get(fieldName) + 1);
                 }
-
-                updateNextArrayMember(xmlStreamReader, xmlParserData, fieldName, fieldType, referredType);
+                updateNextArrayMember(xmlStreamReader, xmlParserData, fieldName, fieldType,
+                        ((ArrayType) fieldType).getElementType());
             }
             case TypeTags.MAP_TAG, TypeTags.ANYDATA_TAG, TypeTags.JSON_TAG ->
                     initializeAttributesForNextMappingValue(xmlParserData, fieldName, fieldType);
+            case TypeTags.TYPE_REFERENCED_TYPE_TAG ->
+                initializeNextValueBasedOnExpectedType(fieldName, TypeUtils.getReferredType(fieldType), temp,
+                        currentNode, xmlParserData);
         }
     }
 
     private void updateNextArrayMember(XMLStreamReader xmlStreamReader, XmlParserData xmlParserData,
                                        String fieldName, Type fieldType, Type type) {
+        if (DataUtils.isRegExpType(type)) {
+            throw DiagnosticLog.error(DiagnosticErrorCode.UNSUPPORTED_TYPE);
+        }
+
         switch (type.getTag()) {
             case TypeTags.RECORD_TYPE_TAG -> updateNextRecord(xmlStreamReader, xmlParserData, fieldName,
                     fieldType, (RecordType) type);
             case TypeTags.MAP_TAG, TypeTags.ANYDATA_TAG, TypeTags.JSON_TAG ->
                     initializeAttributesForNextMappingValue(xmlParserData, fieldName, fieldType);
+            case TypeTags.TYPE_REFERENCED_TYPE_TAG ->
+                updateNextArrayMember(xmlStreamReader, xmlParserData, fieldName, fieldType,
+                        TypeUtils.getReferredType(type));
         }
     }
 
@@ -559,20 +584,27 @@ public class XmlParser {
 
         xmlParserData.attributeHierarchy.push(new QualifiedNameMap<>(new HashMap<>()));
         xmlParserData.fieldHierarchy.push(new QualifiedNameMap<>(new HashMap<>()));
+        xmlParserData.visitedFieldHierarchy.push(new QualifiedNameMap<>(new HashMap<>()));
         xmlParserData.recordTypeStack.push(null);
         BMap<BString, Object> currentNode = xmlParserData.currentNode;
         Object temp = currentNode.get(StringUtils.fromString(fieldName));
         if (temp instanceof BArray) {
-            int arraySize = getArraySize(fieldType, temp);
-            if (arraySize > ((BArray) temp).getLength() || arraySize == -1) {
+            if (DataUtils.isAnydataOrJson(fieldType.getTag())) {
                 ((BArray) temp).append(nextValue);
             } else {
-                DataUtils.logArrayMismatchErrorIfProjectionNotAllowed(xmlParserData.allowDataProjection);
+                int arraySize = getArraySize(fieldType, temp);
+                int currentIndex = xmlParserData.arrayIndexes.peek().get(fieldName);
+                if (currentIndex < arraySize || arraySize == -1) {
+                    ((BArray) temp).add(currentIndex, nextValue);
+                } else {
+                    DataUtils.logArrayMismatchErrorIfProjectionNotAllowed(xmlParserData.allowDataProjection);
+                }
             }
         } else {
             currentNode.put(StringUtils.fromString(fieldName), nextValue);
         }
         xmlParserData.nodesStack.push(currentNode);
+        xmlParserData.arrayIndexes.push(new HashMap<>());
         return nextValue;
     }
 
@@ -595,14 +627,15 @@ public class XmlParser {
 
     private BMap<BString, Object> updateNextValue(RecordType rootRecord, String fieldName, Type fieldType,
                                                   XmlParserData xmlParserData) {
-        BMap<BString, Object> nextValue = ValueCreator.createRecordValue(rootRecord);
+        BMap<BString, Object> nextValue = ValueCreator.createRecordValue(rootRecord.getPackage(), rootRecord.getName());
         updateExpectedTypeStacks(rootRecord, xmlParserData);
         BMap<BString, Object> currentNode = xmlParserData.currentNode;
         Object temp = currentNode.get(StringUtils.fromString(fieldName));
         if (temp instanceof BArray) {
-            int arraySize = ((ArrayType) fieldType).getSize();
-            if (arraySize > ((BArray) temp).getLength() || arraySize == -1) {
-                ((BArray) temp).append(nextValue);
+            ArrayType arrayType = (ArrayType) fieldType;
+            int currentIndex = xmlParserData.arrayIndexes.peek().get(fieldName);
+            if (arrayType.getState() == ArrayType.ArrayState.OPEN || currentIndex < arrayType.getSize()) {
+                ((BArray) temp).add(currentIndex, nextValue);
             } else {
                 DataUtils.logArrayMismatchErrorIfProjectionNotAllowed(xmlParserData.allowDataProjection);
             }
@@ -610,19 +643,30 @@ public class XmlParser {
             currentNode.put(StringUtils.fromString(fieldName), nextValue);
         }
         xmlParserData.nodesStack.push(currentNode);
+        xmlParserData.arrayIndexes.push(new HashMap<>());
         return nextValue;
     }
 
     private void updateExpectedTypeStacks(RecordType recordType, XmlParserData xmlParserData) {
         xmlParserData.attributeHierarchy.push(new QualifiedNameMap<>(getAllAttributesInRecordType(recordType)));
         xmlParserData.fieldHierarchy.push(new QualifiedNameMap<>(getAllFieldsInRecordType(recordType, xmlParserData)));
+        xmlParserData.visitedFieldHierarchy.push(new QualifiedNameMap<>(new HashMap<>()));
         xmlParserData.restTypes.push(recordType.getRestFieldType());
     }
 
-    private void popStacks(XmlParserData xmlParserData) {
-        xmlParserData.fieldHierarchy.pop();
-        xmlParserData.restTypes.pop();
+    private void popExpectedTypeStacks(XmlParserData xmlParserData) {
+        popMappingTypeStacks(xmlParserData);
         xmlParserData.attributeHierarchy.pop();
+        xmlParserData.arrayIndexes.pop();
+    }
+
+    private void popMappingTypeStacks(XmlParserData xmlParserData) {
+        xmlParserData.fieldHierarchy.pop();
+        xmlParserData.visitedFieldHierarchy.pop();
+        xmlParserData.restTypes.pop();
+    }
+
+    private void updateSiblingAndRootRecord(XmlParserData xmlParserData) {
         xmlParserData.siblings = xmlParserData.parents.pop();
         xmlParserData.rootRecord = xmlParserData.recordTypeStack.pop();
     }
@@ -685,7 +729,9 @@ public class XmlParser {
             updateExpectedTypeStacksOfRestType(((ArrayType) restType).getElementType(), xmlParserData);
         } else if (restType.getTag() == TypeTags.ANYDATA_TAG || restType.getTag() == TypeTags.JSON_TAG) {
             xmlParserData.fieldHierarchy.push(new QualifiedNameMap<>(new HashMap<>()));
+            xmlParserData.visitedFieldHierarchy.push(new QualifiedNameMap<>(new HashMap<>()));
             xmlParserData.restTypes.push(restType);
+            xmlParserData.arrayIndexes.push(new HashMap<>());
         }
     }
 
@@ -725,7 +771,7 @@ public class XmlParser {
         if (!xmlParserData.siblings.contains(elemQName)) {
             xmlParserData.siblings.put(elemQName, false);
             if (restType.getTag() == TypeTags.ARRAY_TAG) {
-                BArray tempArray = ValueCreator.createArrayValue(DataUtils.getArrayTypeFromElementType(restType));
+                BArray tempArray = DataUtils.createArrayValue(restType);
                 xmlParserData.currentNode.put(currentFieldName, tempArray);
             } else {
                 BMap<BString, Object> next =
@@ -754,7 +800,7 @@ public class XmlParser {
             throw DiagnosticLog.error(
                     DiagnosticErrorCode.FOUND_ARRAY_FOR_NON_ARRAY_TYPE, restType, elemQName.getLocalPart());
         }
-        BArray tempArray = ValueCreator.createArrayValue(DataUtils.getArrayTypeFromElementType(restType));
+        BArray tempArray = DataUtils.createArrayValue(restType);
         tempArray.append(currentElement);
         xmlParserData.currentNode.put(currentFieldName, tempArray);
 
@@ -790,9 +836,10 @@ public class XmlParser {
         xmlParserData.currentNode = (BMap<BString, Object>) xmlParserData.nodesStack.pop();
         xmlParserData.siblings = xmlParserData.parents.pop();
         if (xmlParserData.siblings.contains(elemQName)) {
-            // TODO: This is duplicated in several places. Remove the duplication.
-            xmlParserData.fieldHierarchy.pop();
-            xmlParserData.restTypes.pop();
+            // TODO: This place behaviour is strange need to check and fix it, Properly.
+            popMappingTypeStacks(xmlParserData);
+//            xmlParserData.attributeHierarchy.pop();
+            xmlParserData.arrayIndexes.pop();
         }
         removeQNameFromRestFieldsPoints(elemQName, xmlParserData);
         xmlParserData.siblings.put(elemQName, true);
@@ -968,7 +1015,14 @@ public class XmlParser {
     }
 
     private Optional<Field> getFieldFromFieldHierarchy(QualifiedName attQName, XmlParserData xmlParserData) {
-        Field field = xmlParserData.fieldHierarchy.peek().get(attQName);
+        Field field;
+        if (xmlParserData.visitedFieldHierarchy.peek().contains(attQName)) {
+            field = xmlParserData.visitedFieldHierarchy.peek().get(attQName);
+        } else {
+            field = xmlParserData.fieldHierarchy.peek().remove(attQName);
+            xmlParserData.visitedFieldHierarchy.peek().put(attQName, field);
+        }
+
         if (field != null) {
             return Optional.of(field);
         }
@@ -1013,12 +1067,19 @@ public class XmlParser {
             case TypeTags.ARRAY_TAG -> {
                 ArrayType arrayType = (ArrayType) restType;
                 Type elemType = TypeUtils.getReferredType(arrayType.getElementType());
+                HashMap<String, Integer> indexes = xmlParserData.arrayIndexes.peek();
+                if (indexes.containsKey(fieldName)) {
+                    indexes.put(fieldName, indexes.get(fieldName) + 1);
+                } else {
+                    indexes.put(fieldName, 0);
+                }
+
                 if (elemType.getTag() == TypeTags.RECORD_TYPE_TAG) {
                     updateStacksWhenRecordAsRestType(elementQName, xmlParserData);
                     // Create an array value since expected type is an array.
                     if (!xmlParserData.currentNode.containsKey(StringUtils.fromString(fieldName))) {
                         xmlParserData.currentNode.put(StringUtils.fromString(fieldName),
-                                ValueCreator.createArrayValue(DataUtils.getArrayTypeFromElementType(elemType)));
+                                DataUtils.createArrayValue(arrayType));
                     }
                     xmlParserData.currentNode =
                             updateNextValue((RecordType) elemType, fieldName, arrayType, xmlParserData);
@@ -1064,10 +1125,12 @@ public class XmlParser {
     public static class XmlParserData {
         private final Stack<Object> nodesStack = new Stack<>();
         private final Stack<QualifiedNameMap<Field>> fieldHierarchy = new Stack<>();
+        Stack<QualifiedNameMap<Field>> visitedFieldHierarchy = new Stack<>();
         private final Stack<QualifiedNameMap<Field>> attributeHierarchy = new Stack<>();
         private final Stack<Type> restTypes = new Stack<>();
         private final Stack<QualifiedName> restFieldsPoints = new Stack<>();
         private final Stack<RecordType> recordTypeStack = new Stack<>();
+        Stack<HashMap<String, Integer>> arrayIndexes = new Stack<>();
         private RecordType rootRecord;
         private Field currentField;
         private QualifiedName rootElement;

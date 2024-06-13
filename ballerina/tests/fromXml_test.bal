@@ -1621,52 +1621,6 @@ function testCommentMiddleInContent2() returns error? {
 }
 
 @test:Config
-function testRegexAsFieldTypeWithParseString() returns error? {
-    string xmlStr = string `<Data>
-                    <A>1</A>
-                    <A>2</A>
-                    <B>Code</B>
-                    <C>
-                        <name>Kanth</name>
-                    </C>
-                </Data>`;
-    record {|
-        string:RegExp[] A;
-        string B;
-        record {|
-            string name;
-        |} C;
-    |} rec1 = check parseString(xmlStr);
-    test:assertEquals(rec1.length(), 3);
-    test:assertEquals(rec1.A, [1, 2]);
-    test:assertEquals(rec1.B, "Code");
-    test:assertEquals(rec1.C.name, "Kanth");
-}
-
-@test:Config
-function testRegexAsFieldTypeWithParseAsType() returns error? {
-    xml xmlVal = xml `<Data>
-                    <A>1</A>
-                    <A>2</A>
-                    <B>Code</B>
-                    <C>
-                        <name>Kanth</name>
-                    </C>
-                </Data>`;
-    record {|
-        string:RegExp[] A;
-        string B;
-        record {|
-            string name;
-        |} C;
-    |} rec1 = check parseAsType(xmlVal);
-    test:assertEquals(rec1.length(), 3);
-    test:assertEquals(rec1.A, [1, 2]);
-    test:assertEquals(rec1.B, "Code");
-    test:assertEquals(rec1.C.name, "Kanth");
-}
-
-@test:Config
 function testAnydataAsRestFieldWithParseString() returns error? {
     string xmlStr = string `<Data>
                     <A>1</A>
@@ -2812,6 +2766,128 @@ function testProjectionWithXmlAttributeForParseAsType() returns error? {
     test:assertEquals(rec.A, "2");
 }
 
+type DataN3 record {|
+    int[4] A;
+|};
+
+@test:Config {
+    groups: ["fromXmlString"]
+}
+function testXmlStringToRecordWithArrayAsFieldType() returns error? {
+    string xmlStr1 = "<Data><A>1</A><A>2</A><A>3</A></Data>";
+    DataN3 rec1 = check parseString(xmlStr1);
+    test:assertEquals(rec1.A, [1, 2, 3, 0]);
+}
+
+@test:Config {
+    groups: ["fromXml"]
+}
+function testXmlToRecordWithArrayAsFieldType() returns error? {
+    xml xmlVal1 = xml `<Data><A>1</A><A>2</A><A>3</A></Data>`;
+    DataN3 rec1 = check parseAsType(xmlVal1);
+    test:assertEquals(rec1.A, [1, 2, 3, 0]);
+}
+
+type Student record {|
+    string name;
+    int age;
+    string code = "Admitted";
+|};
+
+@test:Config
+function testXmlToRecordWithDefaultValuesForParseString1() returns error? {
+    string xmlStr = string `
+    <Student>
+        <name>Walter</name>
+        <age>27</age>
+    </Student>
+    `;
+
+    Student student = check parseString(xmlStr);
+    test:assertEquals(student.name, "Walter");
+    test:assertEquals(student.age, 27);
+    test:assertEquals(student.code, "Admitted");
+}
+
+@test:Config
+function testXmlToRecordWithDefaultValuesForPasrseAsType1() returns error? {
+    xml xmlVal = xml `
+    <Student>
+        <name>Walter</name>
+        <age>27</age>
+    </Student>
+    `;
+
+    Student student = check parseAsType(xmlVal);
+    test:assertEquals(student.name, "Walter");
+    test:assertEquals(student.age, 27);
+    test:assertEquals(student.code, "Admitted");
+}
+
+type University record {|
+    Student[] student;
+    string name;
+    string category = "State"; 
+|};
+
+@test:Config
+function testXmlToRecordWithDefaultValuesForParseString2() returns error? {
+    string xmlStr = string `
+    <University>
+        <student>
+            <name>Walter</name>
+            <age>27</age>
+        </student>
+        <student>
+            <name>Jessy</name>
+            <age>18</age>
+        </student>
+        <name>Standford</name>
+    </University>
+    `;
+
+    University university = check parseString(xmlStr);
+    test:assertEquals(university.student[0].name, "Walter");
+    test:assertEquals(university.student[0].age, 27);
+    test:assertEquals(university.student[0].code, "Admitted");
+
+    test:assertEquals(university.student[1].name, "Jessy");
+    test:assertEquals(university.student[1].age, 18);
+    test:assertEquals(university.student[1].code, "Admitted");
+
+    test:assertEquals(university.name, "Standford");
+    test:assertEquals(university.category, "State");
+}
+
+@test:Config
+function testXmlToRecordWithDefaultValuesForParseAsType2() returns error? {
+    xml xmlVal = xml `
+    <University>
+        <student>
+            <name>Walter</name>
+            <age>27</age>
+        </student>
+        <student>
+            <name>Jessy</name>
+            <age>18</age>
+        </student>
+        <name>Standford</name>
+    </University>
+    `;
+
+    University university = check parseAsType(xmlVal);
+    test:assertEquals(university.student[0].name, "Walter");
+    test:assertEquals(university.student[0].age, 27);
+    test:assertEquals(university.student[0].code, "Admitted");
+
+    test:assertEquals(university.student[1].name, "Jessy");
+    test:assertEquals(university.student[1].age, 18);
+    test:assertEquals(university.student[1].code, "Admitted");
+
+    test:assertEquals(university.name, "Standford");
+    test:assertEquals(university.category, "State");
+}
+
 // Negative cases
 type DataN1 record {|
     int A;
@@ -2869,28 +2945,6 @@ function testXmlToRecordNegative4() {
     xml xmlVal1 = xml `<Data><A>1</A><A>2</A></Data>`;
     DataN1|error rec1 = parseAsType(xmlVal1);
     test:assertEquals((<error>rec1).message(), "expected 'int' value for the field 'A' found 'array' value");
-}
-
-type DataN3 record {|
-    int[4] A;
-|};
-
-@test:Config {
-    groups: ["fromXmlString"]
-}
-function testXmlStringToRecordNegative5() {
-    string xmlStr1 = "<Data><A>1</A><A>2</A><A>3</A></Data>";
-    DataN3|error rec1 = parseString(xmlStr1);
-    test:assertEquals((<error>rec1).message(), "array size is not compatible with the expected size");
-}
-
-@test:Config {
-    groups: ["fromXml"]
-}
-function testXmlToRecordNegative5() {
-    xml xmlVal1 = xml `<Data><A>1</A><A>2</A><A>3</A></Data>`;
-    DataN3|error rec1 = parseAsType(xmlVal1);
-    test:assertEquals((<error>rec1).message(), "array size is not compatible with the expected size");
 }
 
 type DataN4 record {|
@@ -3239,4 +3293,86 @@ function testInvalidNamespaceInOpenRecordForParseAsType2() {
     OpenBook2|Error err = parseAsType(xmldata);
     test:assertTrue(err is error);
     test:assertEquals((<error>err).message(), "undefined field 'name' in record 'data.xmldata:AuthorOpen'");
+}
+
+@test:Config 
+function testRegexAsFieldTypeWithParseStringNegative1() {
+    string xmlStr = string `<Data>
+                    <A>1</A>
+                    <A>2</A>
+                    <B>Code</B>
+                    <C>
+                        <name>Kanth</name>
+                    </C>
+                </Data>`;
+    record {|
+        string:RegExp[] A;
+        string B;
+        record {|
+            string name;
+        |} C;
+    |}|Error err = parseString(xmlStr);
+    test:assertTrue(err is error);
+    test:assertEquals((<error>err).message(), "unsupported input type");
+}
+
+@test:Config 
+function testRegexAsFieldTypeWithParseStringNegative2() {
+    string xmlStr = string `<Data>
+                    <A>1</A>
+                    <B>Code</B>
+                    <C>
+                        <name>Kanth</name>
+                    </C>
+                </Data>`;
+    record {|
+        string:RegExp A;
+        string B;
+        record {|
+            string name;
+        |} C;
+    |}|Error err = parseString(xmlStr);
+    test:assertTrue(err is error);
+    test:assertEquals((<error>err).message(), "unsupported input type");
+}
+
+@test:Config
+function testRegexAsFieldTypeWithParseAsType() {
+    xml xmlVal = xml `<Data>
+                    <A>1</A>
+                    <A>2</A>
+                    <B>Code</B>
+                    <C>
+                        <name>Kanth</name>
+                    </C>
+                </Data>`;
+    record {|
+        string:RegExp[] A;
+        string B;
+        record {|
+            string name;
+        |} C;
+    |}|error err = parseAsType(xmlVal);
+    test:assertTrue(err is error);
+    test:assertEquals((<error>err).message(), "unsupported input type");
+}
+
+@test:Config
+function testRegexAsFieldTypeWithParseAsType2() {
+    xml xmlVal = xml `<Data>
+                    <A>1</A>
+                    <B>Code</B>
+                    <C>
+                        <name>Kanth</name>
+                    </C>
+                </Data>`;
+    record {|
+        string:RegExp A;
+        string B;
+        record {|
+            string name;
+        |} C;
+    |}|error err = parseAsType(xmlVal);
+    test:assertTrue(err is error);
+    test:assertEquals((<error>err).message(), "unsupported input type");
 }
