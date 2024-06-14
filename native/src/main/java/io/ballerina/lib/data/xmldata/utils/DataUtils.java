@@ -39,6 +39,7 @@ import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
+import io.ballerina.stdlib.constraint.Constraints;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -780,6 +781,27 @@ public class DataUtils {
         }
         subRecord.put(StringUtils.fromString(ATTRIBUTE_PREFIX + "xmlns:" + prefix), uri);
         return prefix.getValue().concat(Constants.COLON).concat(key);
+    }
+
+    public static Object validateConstraints(Object convertedValue, BTypedesc typed, boolean requireValidation) {
+        if (!requireValidation) {
+            return convertedValue;
+        }
+
+        Object result = Constraints.validate(convertedValue, typed);
+        if (result instanceof BError bError) {
+             return DiagnosticLog.createXmlError(getPrintableErrorMsg(bError));
+        }
+        return convertedValue;
+    }
+
+    private static String getPrintableErrorMsg(BError err) {
+        String errorMsg = err.getMessage() != null ? err.getMessage() : "";
+        Object details = err.getDetails();
+        if (details != null && !details.toString().equals("{}")) {
+            errorMsg += ", " + details;
+        }
+        return errorMsg;
     }
 
     /**

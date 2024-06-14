@@ -45,14 +45,14 @@ public class Native {
 
     public static Object parseAsType(BXml xml, BMap<BString, Object> options, BTypedesc typed) {
         try {
-            return XmlTraversal.traverse(xml, options, typed.getDescribingType());
+            return XmlTraversal.traverse(xml, options, typed);
         } catch (Exception e) {
-            return DiagnosticLog.getXmlError(e.getMessage());
+            return DiagnosticLog.createXmlError(e.getMessage());
         }
     }
     public static Object parseString(BString xml, BMap<BString, Object> options, BTypedesc typed) {
         try {
-            return XmlParser.parse(new StringReader(xml.getValue()), options, typed.getDescribingType());
+            return XmlParser.parse(new StringReader(xml.getValue()), options, typed);
         } catch (Exception e) {
             return DiagnosticLog.error(DiagnosticErrorCode.XML_PARSE_ERROR, e.getMessage());
         }
@@ -60,8 +60,7 @@ public class Native {
 
     public static Object parseBytes(BArray xml, BMap<BString, Object> options, BTypedesc typed) {
         try {
-            return XmlParser.parse(new InputStreamReader(new ByteArrayInputStream(xml.getBytes())), options,
-                    typed.getDescribingType());
+            return XmlParser.parse(new InputStreamReader(new ByteArrayInputStream(xml.getBytes())), options, typed);
         } catch (Exception e) {
             return DiagnosticLog.error(DiagnosticErrorCode.XML_PARSE_ERROR, e.getMessage());
         }

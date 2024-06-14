@@ -39,6 +39,7 @@ import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
+import io.ballerina.runtime.api.values.BTypedesc;
 
 import java.io.Reader;
 import java.util.ArrayList;
@@ -54,6 +55,7 @@ import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 
+import static io.ballerina.lib.data.xmldata.utils.Constants.ENABLE_CONSTRAINT_VALIDATION;
 import static javax.xml.stream.XMLStreamConstants.CDATA;
 import static javax.xml.stream.XMLStreamConstants.CHARACTERS;
 import static javax.xml.stream.XMLStreamConstants.COMMENT;
@@ -90,6 +92,15 @@ public class XmlParser {
         }
     }
 
+    public static Object parse(Reader reader, BMap<BString, Object> options, BTypedesc typed) {
+        Object convertedValue = parse(reader, options, typed.getDescribingType());
+        if (convertedValue instanceof BError) {
+            return convertedValue;
+        }
+        return DataUtils.validateConstraints(convertedValue, typed,
+                (Boolean) options.get(ENABLE_CONSTRAINT_VALIDATION));
+    }
+
     public static Object parse(Reader reader, BMap<BString, Object> options, Type type) {
         try {
             XmlParserData xmlParserData = new XmlParserData();
@@ -112,9 +123,9 @@ public class XmlParser {
     private void handleXMLStreamException(Exception e) {
         String reason = e.getCause() == null ? e.getMessage() : e.getCause().getMessage();
         if (reason == null) {
-            throw DiagnosticLog.getXmlError(PARSE_ERROR);
+            throw DiagnosticLog.createXmlError(PARSE_ERROR);
         }
-        throw DiagnosticLog.getXmlError(PARSE_ERROR_PREFIX + reason);
+        throw DiagnosticLog.createXmlError(PARSE_ERROR_PREFIX + reason);
     }
 
     public Object parse(Type type, XmlParserData xmlParserData) {
@@ -153,7 +164,7 @@ public class XmlParser {
                 readNext = parseXmlElements(next, xmlParserData);
             }
         } catch (NumberFormatException e) {
-            throw DiagnosticLog.getXmlError(PARSE_ERROR_PREFIX + e);
+            throw DiagnosticLog.createXmlError(PARSE_ERROR_PREFIX + e);
         } catch (BError e) {
             throw e;
         } catch (Exception e) {

@@ -1,7 +1,7 @@
 [package]
 org = "ballerina"
 name = "data.xmldata"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Ballerina"]
 keywords = ["xml"]
 repository = "https://github.com/ballerina-platform/module-ballerina-data-xmldata"
@@ -12,5 +12,11 @@ export = ["data.xmldata"]
 [[platform.java17.dependency]]
 groupId = "io.ballerina.lib"
 artifactId = "data-native"
-version = "0.1.1"
-path = "../native/build/libs/data.xmldata-native-0.1.1.jar"
+version = "0.1.2"
+path = "../native/build/libs/data.xmldata-native-0.1.2-SNAPSHOT.jar"
+
+[[platform.java17.dependency]]
+groupId = "io.ballerina.stdlib"
+artifactId = "constraint-native"
+version = "1.5.0"
+path = "./lib/constraint-native-1.5.0.jar"

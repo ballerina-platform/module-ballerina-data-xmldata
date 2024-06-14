@@ -36,28 +36,32 @@ public class Constants {
 
     private Constants() {}
 
-    public static final String UNDERSCORE = "_";
-    public static final String COLON = ":";
-    public static final MapType JSON_MAP_TYPE = TypeCreator.createMapType(PredefinedTypes.TYPE_JSON);
-    public static final ArrayType JSON_ARRAY_TYPE = TypeCreator.createArrayType(PredefinedTypes.TYPE_JSON);
+    public static final int NS_PREFIX_BEGIN_INDEX = BXmlItem.XMLNS_NS_URI_PREFIX.length();
+    public static final int DEFAULT_TYPE_FLAG = 2049;
+
     public static final String FIELD = "$field$.";
     public static final String NAMESPACE = "Namespace";
-    public static final BString URI = StringUtils.fromString("uri");
-    public static final BString PREFIX = StringUtils.fromString("prefix");
+    public static final String UNDERSCORE = "_";
+    public static final String COLON = ":";
     public static final String ATTRIBUTE = "Attribute";
-    public static final int DEFAULT_TYPE_FLAG = 2049;
     public static final String NAME = "Name";
-    public static final BString VALUE = StringUtils.fromString("value");
     public static final String CONTENT = "#content";
     public static final String FIELD_REGEX = "\\$field\\$\\.";
-    public static final int NS_PREFIX_BEGIN_INDEX = BXmlItem.XMLNS_NS_URI_PREFIX.length();
     public static final String RECORD = "record";
     public static final String RECORD_OR_MAP = "record or map";
     public static final String ANON_TYPE = "$anonType$";
-    public static final QualifiedName EXIT_REST_POINT = new QualifiedName("", "$exitRestPoint$", "");
+    public static final String NON_NUMERIC_STRING_REGEX = "[^a-zA-Z\\d\s]";
+    public static final String NS_ANNOT_NOT_DEFINED = "$$ns_annot_not_defined$$";
+
+    public static final BString URI = StringUtils.fromString("uri");
+    public static final BString PREFIX = StringUtils.fromString("prefix");
+    public static final BString VALUE = StringUtils.fromString("value");
     public static final BString ATTRIBUTE_PREFIX = StringUtils.fromString("attributePrefix");
     public static final BString TEXT_FIELD_NAME = StringUtils.fromString("textFieldName");
     public static final BString ALLOW_DATA_PROJECTION = StringUtils.fromString("allowDataProjection");
-    public static final String NON_NUMERIC_STRING_REGEX = "[^a-zA-Z\\d\s]";
-    public static final String NS_ANNOT_NOT_DEFINED = "$$ns_annot_not_defined$$";
+    public static final BString ENABLE_CONSTRAINT_VALIDATION = StringUtils.fromString("enableConstraintValidation");
+
+    public static final MapType JSON_MAP_TYPE = TypeCreator.createMapType(PredefinedTypes.TYPE_JSON);
+    public static final ArrayType JSON_ARRAY_TYPE = TypeCreator.createArrayType(PredefinedTypes.TYPE_JSON);
+    public static final QualifiedName EXIT_REST_POINT = new QualifiedName("", "$exitRestPoint$", "");
 }

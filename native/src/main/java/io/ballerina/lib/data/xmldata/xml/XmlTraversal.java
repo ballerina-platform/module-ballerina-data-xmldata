@@ -37,8 +37,10 @@ import io.ballerina.runtime.api.types.XmlNodeType;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.utils.TypeUtils;
 import io.ballerina.runtime.api.values.BArray;
+import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
+import io.ballerina.runtime.api.values.BTypedesc;
 import io.ballerina.runtime.api.values.BXml;
 import io.ballerina.runtime.api.values.BXmlItem;
 import io.ballerina.runtime.api.values.BXmlSequence;
@@ -52,6 +54,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import javax.xml.namespace.QName;
 
+import static io.ballerina.lib.data.xmldata.utils.Constants.ENABLE_CONSTRAINT_VALIDATION;
+
 /**
  * Convert Xml value to a ballerina record.
  *
@@ -60,6 +64,15 @@ import javax.xml.namespace.QName;
 public class XmlTraversal {
 
     private static final ThreadLocal<XmlTree> tlXmlTree = ThreadLocal.withInitial(XmlTree::new);
+
+    public static Object traverse(BXml xml, BMap<BString, Object> options, BTypedesc typed) {
+        Object convertedValue = traverse(xml, options, typed.getDescribingType());
+        if (convertedValue instanceof BError) {
+            return convertedValue;
+        }
+        return DataUtils.validateConstraints(convertedValue, typed,
+                (Boolean) options.get(ENABLE_CONSTRAINT_VALIDATION));
+    }
 
     public static Object traverse(BXml xml, BMap<BString, Object> options, Type type) {
         XmlTree xmlTree = tlXmlTree.get();

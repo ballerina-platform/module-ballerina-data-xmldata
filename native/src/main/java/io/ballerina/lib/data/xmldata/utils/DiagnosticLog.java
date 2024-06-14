@@ -38,7 +38,7 @@ public class DiagnosticLog {
 
     public static BError error(DiagnosticErrorCode code, Object... args) {
         String msg = formatMessage(code, args);
-        return getXmlError(msg);
+        return createXmlError(msg);
     }
 
     private static String formatMessage(DiagnosticErrorCode code, Object[] args) {
@@ -46,7 +46,7 @@ public class DiagnosticLog {
         return MessageFormat.format(msgKey, args);
     }
 
-    public static BError getXmlError(String message) {
+    public static BError createXmlError(String message) {
         return ErrorCreator.createError(ModuleUtils.getModule(), ERROR, StringUtils.fromString(message),
                 null, null);
     }

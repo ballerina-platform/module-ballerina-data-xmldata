@@ -87,7 +87,7 @@ public class DataReaderTask implements Runnable {
         DataReaderTask.ResultConsumer<Object> resultConsumer = new DataReaderTask.ResultConsumer<>(future);
         try (var byteBlockSteam = new BallerinaByteBlockInputStream(env, iteratorObj, resolveNextMethod(iteratorObj),
                                                                     resolveCloseMethod(iteratorObj), resultConsumer)) {
-            Object result = XmlParser.parse(new InputStreamReader(byteBlockSteam), options, typed.getDescribingType());
+            Object result = XmlParser.parse(new InputStreamReader(byteBlockSteam), options, typed);
             future.complete(result);
         } catch (Exception e) {
             future.complete(DiagnosticLog.error(DiagnosticErrorCode.STREAM_BROKEN, e.getMessage()));

@@ -9,12 +9,26 @@ distribution-version = "2201.9.0"
 
 [[package]]
 org = "ballerina"
-name = "data.xmldata"
-version = "0.1.1"
+name = "constraint"
+version = "1.5.0"
+scope = "testOnly"
 dependencies = [
+	{org = "ballerina", name = "jballerina.java"}
+]
+modules = [
+	{org = "ballerina", packageName = "constraint", moduleName = "constraint"}
+]
+
+[[package]]
+org = "ballerina"
+name = "data.xmldata"
+version = "0.1.2"
+dependencies = [
+	{org = "ballerina", name = "constraint"},
 	{org = "ballerina", name = "io"},
 	{org = "ballerina", name = "jballerina.java"},
-	{org = "ballerina", name = "test"}
+	{org = "ballerina", name = "test"},
+	{org = "ballerina", name = "time"}
 ]
 modules = [
 	{org = "ballerina", packageName = "data.xmldata", moduleName = "data.xmldata"}
@@ -97,5 +111,17 @@ dependencies = [
 ]
 modules = [
 	{org = "ballerina", packageName = "test", moduleName = "test"}
+]
+
+[[package]]
+org = "ballerina"
+name = "time"
+version = "2.4.0"
+scope = "testOnly"
+dependencies = [
+	{org = "ballerina", name = "jballerina.java"}
+]
+modules = [
+	{org = "ballerina", packageName = "time", moduleName = "time"}
 ]
 
